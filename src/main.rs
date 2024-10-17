@@ -346,128 +346,124 @@ fn ref_replace(
 mod test {
     use std::collections::HashMap;
 
-    type JsonInfo = (serde_json::Map<String, serde_json::Value>, String);
+    #[derive(Clone, Eq, PartialEq, Debug)]
+    struct JsonComponent {
+        raw: serde_json::Value,
+        resolved: serde_json::Value,
+    }
+
+    impl JsonComponent {
+        fn new(raw: serde_json::Value, resolved: serde_json::Value) -> Self {
+            Self { raw, resolved }
+        }
+
+        fn new_with_raw(raw: serde_json::Value) -> Self {
+            Self { raw: raw.clone(), resolved: raw }
+        }
+    }
 
     #[rstest::fixture]
     #[once]
-    fn component_a() -> serde_json::Value {
-        serde_json::json!(
-            {
-                "foo": {
-                    "$ref": "#components/schemas/COMPONENT_B"
+    fn component_1(component_2: &JsonComponent) -> JsonComponent {
+        JsonComponent::new(
+            serde_json::json!(
+                {
+                    "foo": {
+                        "$ref": "#components/schemas/COMPONENT_2"
+                    }
                 }
-            }
+            ),
+            serde_json::json!(
+                {
+                    "foo": component_2.resolved
+                }
+            ),
         )
     }
 
     #[rstest::fixture]
     #[once]
-    fn component_a_resolved(component_b: &serde_json::Value) -> serde_json::Value {
-        serde_json::json!(
-            {
-                "foo": component_b
-            }
-        )
-    }
-
-    #[rstest::fixture]
-    #[once]
-    fn component_b() -> serde_json::Value {
-        serde_json::json!({
+    fn component_2() -> JsonComponent {
+        JsonComponent::new_with_raw(serde_json::json!({
            "bazz": {
                 "type": "string"
-            }
-        })
+           }
+        }))
     }
 
     #[rstest::fixture]
     #[once]
-    fn component_c() -> serde_json::Value {
-        serde_json::json!({
-            "foo": {
-                "$ref": "./file_a.json/#components/schemas/COMPONENT_A"
-            }
-        })
+    fn component_3(component_1: &JsonComponent) -> JsonComponent {
+        JsonComponent::new(
+            serde_json::json!({
+                "foo": {
+                    "$ref": "./file_a.json/#components/schemas/COMPONENT_1"
+                }
+            }),
+            serde_json::json!({
+                "foo": component_1.resolved
+            }),
+        )
     }
 
     #[rstest::fixture]
     #[once]
-    fn component_c_resolved(component_a_resolved: &serde_json::Value) -> serde_json::Value {
-        serde_json::json!({
-            "foo": component_a_resolved
-        })
-    }
-
-    #[rstest::fixture]
-    #[once]
-    fn component_d() -> serde_json::Value {
-        serde_json::json!({
+    fn component_4() -> JsonComponent {
+        JsonComponent::new_with_raw(serde_json::json!({
             "bazz": {
                 "type": "string",
                 "pattern": "^Hello"
             }
-        })
+        }))
     }
 
-    #[rstest::fixture]
-    #[once]
-    fn file_a(component_a: &serde_json::Value, component_b: &serde_json::Value) -> JsonInfo {
-        (
-            serde_json::json!(
-                {
-                    "components": {
-                        "schemas": {
-                            "COMPONENT_A": component_a,
-                            "COMPONENT_B": component_b
+    macro_rules! file {
+        ($file:literal => {$($name:literal : $value:ident),* $(,)?}) => {
+            (
+                serde_json::json!(
+                    {
+                        "components": {
+                            "schemas": {
+                               $(
+                                    $name: $value.raw,
+                                )*
+                            }
                         }
                     }
-                }
+                )
+                .as_object()
+                .unwrap()
+                .clone(),
+                $file.to_string()
             )
-            .as_object()
-            .unwrap()
-            .clone(),
-            "./file_a.json".to_string(),
-        )
-    }
-
-    #[rstest::fixture]
-    #[once]
-    fn file_b(component_c: &serde_json::Value, component_d: &serde_json::Value) -> JsonInfo {
-        (
-            serde_json::json!(
-                {
-                    "components": {
-                        "schemas": {
-                            "COMPONENT_C": component_c,
-                            "COMPONENT_D": component_d
-                        }
-                    }
-                }
-            )
-            .as_object()
-            .unwrap()
-            .clone(),
-            "./file_b.json".to_string(),
-        )
+        };
     }
 
     #[rstest::rstest]
     fn ref_load_valid(
-        file_a: &JsonInfo,
-        file_b: &JsonInfo,
-        component_a: &serde_json::Value,
-        component_b: &serde_json::Value,
-        component_c: &serde_json::Value,
-        component_d: &serde_json::Value,
+        component_1: &JsonComponent,
+        component_2: &JsonComponent,
+        component_3: &JsonComponent,
+        component_4: &JsonComponent,
     ) {
         crate::logger_init();
 
+        let file_a = file!("./file_a.json" => {
+            "COMPONENT_1": component_1,
+            "COMPONENT_2": component_2,
+        });
+
+        let file_b = file!("./file_b.json" => {
+            "COMPONENT_3": component_3,
+            "COMPONENT_4": component_4,
+        });
+
         let refs = crate::ref_load(&vec![file_a.clone(), file_b.clone()]).unwrap();
         let mut expected = HashMap::default();
-        expected.insert("./file_a.jsonCOMPONENT_A".to_string(), ("./file_a.json".to_string(), component_a.clone()));
-        expected.insert("./file_a.jsonCOMPONENT_B".to_string(), ("./file_a.json".to_string(), component_b.clone()));
-        expected.insert("./file_b.jsonCOMPONENT_C".to_string(), ("./file_b.json".to_string(), component_c.clone()));
-        expected.insert("./file_b.jsonCOMPONENT_D".to_string(), ("./file_b.json".to_string(), component_d.clone()));
+        expected.insert("./file_a.jsonCOMPONENT_1".to_string(), ("./file_a.json".to_string(), component_1.raw.clone()));
+        expected.insert("./file_a.jsonCOMPONENT_2".to_string(), ("./file_a.json".to_string(), component_2.raw.clone()));
+        expected.insert("./file_b.jsonCOMPONENT_3".to_string(), ("./file_b.json".to_string(), component_3.raw.clone()));
+        expected.insert("./file_b.jsonCOMPONENT_4".to_string(), ("./file_b.json".to_string(), component_4.raw.clone()));
 
         assert_eq!(
             refs,
@@ -479,26 +475,32 @@ mod test {
     }
 
     #[rstest::rstest]
-    // TODO: declare files here, with different component order permutations
     fn ref_resolve_valid(
-        file_a: &JsonInfo,
-        file_b: &JsonInfo,
-        component_a_resolved: &serde_json::Value,
-        component_b: &serde_json::Value,
-        component_c_resolved: &serde_json::Value,
-        component_d: &serde_json::Value,
+        component_1: &JsonComponent,
+        component_2: &JsonComponent,
+        component_3: &JsonComponent,
+        component_4: &JsonComponent,
     ) {
         crate::logger_init();
 
+        let file_a = file!("./file_a.json" => {
+            "COMPONENT_1": component_1,
+            "COMPONENT_2": component_2,
+        });
+
+        let file_b = file!("./file_b.json" => {
+            "COMPONENT_3": component_3,
+            "COMPONENT_4": component_4,
+        });
+
         let refs = crate::ref_load(&vec![file_a.clone(), file_b.clone()]).unwrap();
-        tracing::trace!("Raw references are: {}", serde_json::to_string_pretty(&refs).unwrap());
 
         let refs_resolved = crate::ref_resolved(&refs).unwrap();
         let mut expected = serde_json::Map::default();
-        expected.insert("./file_a.jsonCOMPONENT_A".to_string(), component_a_resolved.clone());
-        expected.insert("./file_a.jsonCOMPONENT_B".to_string(), component_b.clone());
-        expected.insert("./file_b.jsonCOMPONENT_C".to_string(), component_c_resolved.clone());
-        expected.insert("./file_b.jsonCOMPONENT_D".to_string(), component_d.clone());
+        expected.insert("./file_a.jsonCOMPONENT_1".to_string(), component_1.resolved.clone());
+        expected.insert("./file_a.jsonCOMPONENT_2".to_string(), component_2.resolved.clone());
+        expected.insert("./file_b.jsonCOMPONENT_3".to_string(), component_3.resolved.clone());
+        expected.insert("./file_b.jsonCOMPONENT_4".to_string(), component_4.resolved.clone());
 
         assert_eq!(
             refs_resolved,
