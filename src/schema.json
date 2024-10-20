@@ -1,0 +1,79 @@
+{
+  "components": {
+    "schemas": {
+      "LANGUAGE": {
+        "enum": [
+          "rust",
+          "zig",
+          "python",
+          "javascript",
+          "java",
+          "ruby",
+          "haskel",
+          "ada",
+          "brainfuck",
+          "maelbulge"
+        ]
+      },
+      "PERSON": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "locale": {
+            "type": "string"
+          },
+          "age": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 99
+          },
+          "status": {
+            "type": "string"
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LANGUAGE"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "locale",
+          "languages"
+        ]
+      },
+      "ORGANIZATION": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "inductee": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PERSON"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "locale",
+          "inductee"
+        ]
+      }
+    }
+  },
+  "$ref": "#/components/schemas/ORGANIZATION"
+}

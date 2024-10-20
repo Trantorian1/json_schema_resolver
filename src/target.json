@@ -1,0 +1,36 @@
+{
+  "name": "Foundation",
+  "locale": "Terminus",
+  "inductee": [
+    {
+      "name": "Hari Seldon",
+      "locale": "Trantor",
+      "age": 91,
+      "languages": [
+        "haskel",
+        "ada"
+      ]
+    },
+    {
+      "name": "Salvador Hardin",
+      "locale": "Terminus",
+      "status": "Mayor",
+      "languages": [
+        "rust",
+        "zig"
+      ]
+    },
+    {
+      "name": "The Mule",
+      "aliases": [
+        "Magnifico Grandissimo"
+      ],
+      "locale": "Gaia",
+      "age": 25,
+      "status": "dictator",
+      "languages": [
+        "brainfuck"
+      ]
+    }
+  ]
+}
