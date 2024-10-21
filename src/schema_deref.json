@@ -1,0 +1,208 @@
+{
+  "components": {
+    "schemas": {
+      "ACHIEVEMENT": {
+        "name": "Achievement",
+        "description": "A notable accomplishment",
+        "type": "object",
+        "properties": {
+          "title": {
+            "name": "title",
+            "type": "string"
+          },
+          "brief": {
+            "name": "brief",
+            "description": "A short description of an achievement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "brief"
+        ]
+      },
+      "LOCALE": {
+        "name": "locale",
+        "description": "A location in the galaxy",
+        "enum": [
+          "Trantor",
+          "Terminus",
+          "Gaia",
+          "Earth"
+        ]
+      },
+      "CHARACTER_ID": {
+        "name": "character identity",
+        "description": "Brief overview of a character's identity",
+        "type": "object",
+        "properties": {
+          "age": {
+            "name": "age",
+            "description": "The age of a character, in years",
+            "type": "integer",
+            "minimum": 0
+          },
+          "locale": {
+            "name": "locale",
+            "description": "A location in the galaxy",
+            "enum": [
+              "Trantor",
+              "Terminus",
+              "Gaia",
+              "Earth"
+            ]
+          },
+          "title": {
+            "name": "tile",
+            "description": "Notable distinctions awarded to a character",
+            "type": "string"
+          },
+          "brief": {
+            "name": "brief",
+            "description": "A short description of a character",
+            "type": "string"
+          }
+        },
+        "required": [
+          "age",
+          "locale",
+          "title",
+          "brief"
+        ]
+      },
+      "CHARACTER_INFO": {
+        "name": "character information",
+        "description": "Surface information about a character and their key achievements",
+        "type": "object",
+        "properties": {
+          "achievements": {
+            "name": "achievements",
+            "description": "A list of a character's most notable achievements",
+            "type": "array",
+            "items": {
+              "name": "Achievement",
+              "description": "A notable accomplishment",
+              "type": "object",
+              "properties": {
+                "title": {
+                  "name": "title",
+                  "type": "string"
+                },
+                "brief": {
+                  "name": "brief",
+                  "description": "A short description of an achievement",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title",
+                "brief"
+              ]
+            }
+          },
+          "friends": {
+            "name": "friends",
+            "description": "A chracter's closes friends and family",
+            "type": "array",
+            "items": {
+              "type": "strings"
+            }
+          }
+        },
+        "required": [
+          "achievements",
+          "friends"
+        ]
+      },
+      "CHARACTER": {
+        "name": "character",
+        "description": "A character in the book series 'Foundation' by Isaac Asimov",
+        "allOf": [
+          {
+            "name": "character identity",
+            "description": "Brief overview of a character's identity",
+            "type": "object",
+            "properties": {
+              "age": {
+                "name": "age",
+                "description": "The age of a character, in years",
+                "type": "integer",
+                "minimum": 0
+              },
+              "locale": {
+                "name": "locale",
+                "description": "A location in the galaxy",
+                "enum": [
+                  "Trantor",
+                  "Terminus",
+                  "Gaia",
+                  "Earth"
+                ]
+              },
+              "title": {
+                "name": "tile",
+                "description": "Notable distinctions awarded to a character",
+                "type": "string"
+              },
+              "brief": {
+                "name": "brief",
+                "description": "A short description of a character",
+                "type": "string"
+              }
+            },
+            "required": [
+              "age",
+              "locale",
+              "title",
+              "brief"
+            ]
+          },
+          {
+            "name": "character information",
+            "description": "Surface information about a character and their key achievements",
+            "type": "object",
+            "properties": {
+              "achievements": {
+                "name": "achievements",
+                "description": "A list of a character's most notable achievements",
+                "type": "array",
+                "items": {
+                  "name": "Achievement",
+                  "description": "A notable accomplishment",
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "name": "title",
+                      "type": "string"
+                    },
+                    "brief": {
+                      "name": "brief",
+                      "description": "A short description of an achievement",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "brief"
+                  ]
+                }
+              },
+              "friends": {
+                "name": "friends",
+                "description": "A chracter's closes friends and family",
+                "type": "array",
+                "items": {
+                  "type": "strings"
+                }
+              }
+            },
+            "required": [
+              "achievements",
+              "friends"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

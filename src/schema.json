@@ -1,79 +1,107 @@
 {
   "components": {
     "schemas": {
-      "LANGUAGE": {
+      "ACHIEVEMENT": {
+        "name": "Achievement",
+        "description": "A notable accomplishment",
+        "type": "object",
+        "properties": {
+          "title": {
+            "name": "title",
+            "type": "string"
+          },
+          "brief": {
+            "name": "brief",
+            "description": "A short description of an achievement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "brief"
+        ]
+      },
+      "LOCALE": {
+        "name": "locale",
+        "description": "A location in the galaxy",
         "enum": [
-          "rust",
-          "zig",
-          "python",
-          "javascript",
-          "java",
-          "ruby",
-          "haskel",
-          "ada",
-          "brainfuck",
-          "maelbulge"
+          "Trantor",
+          "Terminus",
+          "Gaia",
+          "Earth"
         ]
       },
-      "PERSON": {
+      "CHARACTER_ID": {
+        "name": "character identity",
+        "description": "Brief overview of a character's identity",
         "type": "object",
         "properties": {
-          "name": {
-            "type": "string"
-          },
-          "aliases": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "locale": {
-            "type": "string"
-          },
           "age": {
+            "name": "age",
+            "description": "The age of a character, in years",
             "type": "integer",
-            "minimum": 0,
-            "maximum": 99
-          },
-          "status": {
-            "type": "string"
-          },
-          "languages": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LANGUAGE"
-            }
-          }
-        },
-        "required": [
-          "name",
-          "locale",
-          "languages"
-        ]
-      },
-      "ORGANIZATION": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
+            "minimum": 0
           },
           "locale": {
+            "$ref": "#/components/schemas/LOCALE"
+          },
+          "title": {
+            "name": "tile",
+            "description": "Notable distinctions awarded to a character",
             "type": "string"
           },
-          "inductee": {
+          "brief": {
+            "name": "brief",
+            "description": "A short description of a character",
+            "type": "string"
+          }
+        },
+        "required": [
+          "age",
+          "locale",
+          "title",
+          "brief"
+        ]
+      },
+      "CHARACTER_INFO": {
+        "name": "character information",
+        "description": "Surface information about a character and their key achievements",
+        "type": "object",
+        "properties": {
+          "achievements": {
+            "name": "achievements",
+            "description": "A list of a character's most notable achievements",
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/PERSON"
+              "$ref": "#/components/schemas/ACHIEVEMENT"
+            }
+          },
+          "friends": {
+            "name": "friends",
+            "description": "A chracter's closes friends and family",
+            "type": "array",
+            "items": {
+              "type": "strings"
             }
           }
         },
         "required": [
-          "name",
-          "locale",
-          "inductee"
+          "achievements",
+          "friends"
+        ]
+      },
+      "CHARACTER": {
+        "name": "character",
+        "description": "A character in the book series 'Foundation' by Isaac Asimov",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CHARACTER_ID"
+          },
+          {
+            "$ref": "#/components/schemas/CHARACTER_INFO"
+          }
         ]
       }
     }
-  },
-  "$ref": "#/components/schemas/ORGANIZATION"
+  }
 }

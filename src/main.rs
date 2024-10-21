@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
 
     // This is where the actual component de-referencing takes place, yielding a de-referenced map
     // of all components, stored with information on their file of origin.
-    let deref_map = ref_resolved(&ref_map)?;
+    let deref_map = ref_resolved(ref_map)?;
 
     // Now, we can finally go through and de-reference the rest of the JSON Schema
     json_resolve(&mut json_in_and_files, &deref_map)?;
@@ -97,22 +97,21 @@ where
 {
     tracing::info!("Loading files");
 
-    iter.into_iter()
-        .try_fold(Vec::with_capacity(size_hint.unwrap_or_default()), |mut acc, path| {
-            tracing::debug!("Opening file: {}", path.to_string_lossy());
+    iter.into_iter().try_fold(Vec::with_capacity(size_hint.unwrap_or_default()), |mut acc, path| {
+        tracing::debug!("Opening file: {}", path.to_string_lossy());
 
-            anyhow::ensure!(
-                path.extension().map(ffi::OsStr::to_str) == Some(Some("json")),
-                "{} is not a json file",
-                path.to_string_lossy()
-            );
+        anyhow::ensure!(
+            path.extension().map(ffi::OsStr::to_str) == Some(Some("json")),
+            "{} is not a json file",
+            path.to_string_lossy()
+        );
 
-            tracing::debug!("Opening file: {} - SUCCESS", path.to_string_lossy());
-            acc.push((io::BufReader::new(fs::File::open(&path)?), path.to_string_lossy().to_string()));
+        tracing::debug!("Opening file: {} - SUCCESS", path.to_string_lossy());
+        let file = fs::File::open(&path).with_context(|| format!("Failed to open {}", path.to_string_lossy()))?;
+        acc.push((io::BufReader::new(file), path.to_string_lossy().to_string()));
 
-            anyhow::Ok(acc)
-        })
-        .context("Failed to open files")
+        anyhow::Ok(acc)
+    })
 }
 
 #[tracing::instrument(skip(iter))]
@@ -224,7 +223,7 @@ fn ref_resolve(
                             val.as_str().unwrap_or_default()
                         );
                     }
-                } else if matches!(val, serde_json::Value::Object(_)) {
+                } else if matches!(val, serde_json::Value::Object(_)) || matches!(val, serde_json::Value::Array(_)) {
                     acc.insert(key_outer.clone(), ref_resolve(local_file, val, ref_map)?);
                 } else {
                     acc.insert(key_outer.clone(), val.clone());
@@ -236,6 +235,22 @@ fn ref_resolve(
             tracing::debug!("Resolving reference - SUCCESS");
             anyhow::Ok(serde_json::Value::Object(object))
         }
+        serde_json::Value::Array(array) => {
+            tracing::debug!("Asserting reference type - ARRAY");
+
+            let array = array.iter().try_fold(Vec::with_capacity(array.len()), |mut acc, val| {
+                let val = if matches!(val, serde_json::Value::Object(_)) {
+                    tracing::debug!("Found a nested object in an array");
+                    ref_resolve(local_file, val, ref_map)?
+                } else {
+                    val.clone()
+                };
+                acc.push(val);
+                anyhow::Ok(acc)
+            })?;
+
+            anyhow::Ok(serde_json::Value::Array(array))
+        }
         serde_json::Value::String(ref_path) => {
             tracing::debug!("Asserting reference type - NESTED REFERENCE");
             tracing::debug!("Extracting reference path");
@@ -243,7 +258,7 @@ fn ref_resolve(
             anyhow::ensure!(ref_path.len() > 20, "Error parsing {local_file}: invalid reference format {ref_path}");
             let (ref_file, ref_name) = ref_path
                 .split_once("#")
-                .map(|(l, r)| (l.trim_end_matches('/'), &r[19..]))
+                .map(|(l, r)| (l.trim_end_matches('/'), &r[20..]))
                 .with_context(|| format!("Error parsing {local_file}: invalid reference format {ref_path}"))?;
 
             tracing::debug!("Extracting reference path - SUCCESS");
@@ -284,7 +299,7 @@ fn ref_resolve(
 
 #[tracing::instrument(skip(ref_map))]
 fn ref_resolved(
-    ref_map: &HashMap<String, (String, serde_json::Value)>,
+    ref_map: HashMap<String, (String, serde_json::Value)>,
 ) -> Result<serde_json::Map<String, serde_json::Value>, anyhow::Error> {
     tracing::info!("Resolving references");
 
@@ -292,7 +307,7 @@ fn ref_resolved(
 
     ref_map.iter().try_fold(acc, |mut acc, (key, (local_file, val))| {
         let span = tracing::debug_span!("Resolving file", local_file, key).entered();
-        acc.insert(key.clone(), ref_resolve(local_file, val, ref_map)?);
+        acc.insert(key.clone(), ref_resolve(local_file, val, &ref_map)?);
         span.exit();
 
         anyhow::Ok(acc)
@@ -378,228 +393,80 @@ fn json_resolve(
 mod test {
     use std::collections::HashMap;
 
-    #[derive(Clone, Eq, PartialEq, Debug)]
-    struct JsonComponent {
-        raw: serde_json::Value,
-        resolved: serde_json::Value,
-    }
-
-    #[derive(Clone, Eq, PartialEq, Debug)]
-    struct JsonFile {
-        raw: serde_json::Map<String, serde_json::Value>,
-        resolved: serde_json::Map<String, serde_json::Value>,
-        name: String,
-    }
-
-    impl JsonFile {
-        fn raw(&self) -> (serde_json::Map<String, serde_json::Value>, String) {
-            (self.raw.clone(), self.name.clone())
-        }
-
-        fn resolved(&self) -> (serde_json::Map<String, serde_json::Value>, String) {
-            (self.resolved.clone(), self.name.clone())
-        }
-    }
-
-    impl JsonComponent {
-        fn new(raw: serde_json::Value, resolved: serde_json::Value) -> Self {
-            Self { raw, resolved }
-        }
-
-        fn new_with_raw(raw: serde_json::Value) -> Self {
-            Self { raw: raw.clone(), resolved: raw }
-        }
+    #[rstest::fixture]
+    #[once]
+    fn schema() -> serde_json::Value {
+        let file = std::fs::File::open("./src/schema.json").expect("Opening './src/schema.json'");
+        let reader = std::io::BufReader::new(file);
+        serde_json::from_reader(reader).expect("Loading reference json")
     }
 
     #[rstest::fixture]
     #[once]
-    fn component_1(component_2: &JsonComponent) -> JsonComponent {
-        JsonComponent::new(
-            serde_json::json!(
-                {
-                    "foo": {
-                        "$ref": "#components/schemas/COMPONENT_2"
-                    }
-                }
-            ),
-            serde_json::json!(
-                {
-                    "foo": component_2.resolved
-                }
-            ),
-        )
-    }
-
-    #[rstest::fixture]
-    #[once]
-    fn component_2() -> JsonComponent {
-        JsonComponent::new_with_raw(serde_json::json!({
-           "bazz": {
-                "type": "string"
-           }
-        }))
-    }
-
-    #[rstest::fixture]
-    #[once]
-    fn component_3(component_1: &JsonComponent) -> JsonComponent {
-        JsonComponent::new(
-            serde_json::json!({
-                "foo": {
-                    "$ref": "./file_a.json/#components/schemas/COMPONENT_1"
-                }
-            }),
-            serde_json::json!({
-                "foo": component_1.resolved
-            }),
-        )
-    }
-
-    #[rstest::fixture]
-    #[once]
-    fn component_4() -> JsonComponent {
-        JsonComponent::new_with_raw(serde_json::json!({
-            "bazz": {
-                "type": "string",
-                "pattern": "^Hello"
-            }
-        }))
-    }
-
-    #[rstest::fixture]
-    #[once]
-    fn method_1() -> JsonComponent {
-        JsonComponent::new_with_raw(serde_json::json!({
-            "name": "foo",
-            "description": "A dummy function",
-            "type": "object",
-            "schema": {
-                "tile": "bazz",
-                "type": "integer",
-                "minimum": 3
-            }
-        }))
-    }
-
-    macro_rules! file {
-        ($file:literal => {
-            $(methods: [
-                $($method:ident),+ $(,)?
-            ],)?
-            $(components: {
-                $($component:literal : $value:ident),+ $(,)?
-            })?
-        }) => {
-            JsonFile {
-                raw: serde_json::json!(
-                        {
-                            $("methods": [
-                                $($method.raw,)*
-                            ],)?
-                            $("components": {
-                                "schemas": {
-                                   $($component: $value.raw,)*
-                                }
-                            })?
-                        }
-                    )
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                resolved: serde_json::json!(
-                        {
-                            $("methods": [
-                                $($method.resolved,)*
-                            ],)?
-                            $("components": {
-                                "schemas": {
-                                    // This is the case as we have already resolved components as
-                                    // part of `ref_resolve` and will be using that instead of
-                                    // patching each file individually, as this would lead to
-                                    // unnecessary cloning
-                                    $($component: $value.raw,)*
-                                }
-                            })?
-                        }
-                    )
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                name: $file.to_string()
-            }
-        };
+    fn schema_deref() -> serde_json::Value {
+        let file = std::fs::File::open("./src/schema_deref.json").expect("Opening ./src/schema_deref.json");
+        let reader = std::io::BufReader::new(file);
+        serde_json::from_reader(reader).expect("Loading reference json")
     }
 
     #[rstest::rstest]
-    fn ref_load_valid(
-        component_1: &JsonComponent,
-        component_2: &JsonComponent,
-        component_3: &JsonComponent,
-        component_4: &JsonComponent,
-    ) {
+    fn files_and_json_load_valid(schema: &serde_json::Value) {
         crate::logger_init();
 
-        let file_a = file!("./file_a.json" => {
-            components: {
-                "COMPONENT_1": component_1,
-                "COMPONENT_2": component_2,
-            }
-        });
+        let readers_and_paths = crate::files_load(vec![std::path::PathBuf::from("./src/schema.json")], Some(1))
+            .expect("Initializing file readers");
+        let json_in_and_files = crate::json_load(readers_and_paths, Some(1)).expect("Loading json");
+        let json_only = json_in_and_files.first().expect("Retrieving file json").clone().0;
+        let schema_actual = serde_json::Value::Object(json_only);
 
-        let file_b = file!("./file_b.json" => {
-            components: {
-                "COMPONENT_3": component_3,
-               "COMPONENT_4": component_4,
-            }
-        });
+        assert_eq!(&schema_actual, schema);
+    }
 
-        let refs = crate::ref_load(&vec![file_a.raw(), file_b.raw()]).unwrap();
-        let mut expected = HashMap::default();
-        expected.insert("./file_a.jsonCOMPONENT_1".to_string(), ("./file_a.json".to_string(), component_1.raw.clone()));
-        expected.insert("./file_a.jsonCOMPONENT_2".to_string(), ("./file_a.json".to_string(), component_2.raw.clone()));
-        expected.insert("./file_b.jsonCOMPONENT_3".to_string(), ("./file_b.json".to_string(), component_3.raw.clone()));
-        expected.insert("./file_b.jsonCOMPONENT_4".to_string(), ("./file_b.json".to_string(), component_4.raw.clone()));
+    #[rstest::rstest]
+    fn ref_load_valid(schema: &serde_json::Value) {
+        crate::logger_init();
+
+        let readers_and_paths = crate::files_load(vec![std::path::PathBuf::from("./src/schema.json")], Some(1))
+            .expect("Initializing file readers");
+        let json_in_and_files = crate::json_load(readers_and_paths, Some(1)).expect("Loading json");
+        let ref_map = crate::ref_load(&json_in_and_files).expect("Resolving references");
+
+        let schema = schema.get("components").unwrap().get("schemas").unwrap().as_object().unwrap();
+        let expected = schema.iter().map(|(k, v)| (k.clone(), v.clone())).fold(
+            HashMap::with_capacity(ref_map.len()),
+            |mut acc, (key, val)| {
+                acc.insert(format!("./src/schema.json{key}"), ("./src/schema.json".to_string(), val));
+                acc
+            },
+        );
 
         assert_eq!(
-            refs,
+            ref_map,
             expected,
             "{} != {}",
-            serde_json::to_string_pretty(&refs).unwrap(),
+            serde_json::to_string_pretty(&ref_map).unwrap(),
             serde_json::to_string_pretty(&expected).unwrap()
         );
     }
 
     #[rstest::rstest]
-    fn ref_resolve_valid(
-        component_1: &JsonComponent,
-        component_2: &JsonComponent,
-        component_3: &JsonComponent,
-        component_4: &JsonComponent,
-    ) {
+    fn ref_resolve_valid(schema_deref: &serde_json::Value) {
         crate::logger_init();
 
-        let file_a = file!("./file_a.json" => {
-            components: {
-                "COMPONENT_1": component_1,
-                "COMPONENT_2": component_2,
-            }
-        });
+        let readers_and_paths = crate::files_load(vec![std::path::PathBuf::from("./src/schema.json")], Some(1))
+            .expect("Initializing file readers");
+        let json_in_and_files = crate::json_load(readers_and_paths, Some(1)).expect("Loading json");
+        let ref_map = crate::ref_load(&json_in_and_files).unwrap();
+        let refs_resolved = crate::ref_resolved(ref_map).expect("Resolving references");
 
-        let file_b = file!("./file_b.json" => {
-            components: {
-                "COMPONENT_3": component_3,
-                "COMPONENT_4": component_4,
-            }
-        });
-
-        let refs = crate::ref_load(&vec![file_a.raw(), file_b.raw()]).unwrap();
-
-        let refs_resolved = crate::ref_resolved(&refs).unwrap();
-        let mut expected = serde_json::Map::default();
-        expected.insert("./file_a.jsonCOMPONENT_1".to_string(), component_1.resolved.clone());
-        expected.insert("./file_a.jsonCOMPONENT_2".to_string(), component_2.resolved.clone());
-        expected.insert("./file_b.jsonCOMPONENT_3".to_string(), component_3.resolved.clone());
-        expected.insert("./file_b.jsonCOMPONENT_4".to_string(), component_4.resolved.clone());
+        let schema_deref = schema_deref.get("components").unwrap().get("schemas").unwrap().as_object().unwrap();
+        let expected = schema_deref.iter().map(|(k, v)| (k.clone(), v.clone())).fold(
+            serde_json::Map::default(),
+            |mut acc, (key, val)| {
+                acc.insert(format!("./src/schema.json{key}"), val);
+                acc
+            },
+        );
 
         assert_eq!(
             refs_resolved,
@@ -610,31 +477,31 @@ mod test {
         )
     }
 
-    #[rstest::rstest]
-    fn json_resolve_valid(
-        component_1: &JsonComponent,
-        component_2: &JsonComponent,
-        component_3: &JsonComponent,
-        component_4: &JsonComponent,
-        method_1: &JsonComponent,
-    ) {
-        crate::logger_init();
-
-        let file_a = file!("./file_a.json" => {
-            methods: [
-                method_1
-            ],
-            components: {
-                "COMPONENT_1": component_1,
-                "COMPONENT_2": component_2
-            }
-        });
-
-        let file_b = file!("./file_b.json" => {
-            components: {
-                "COMPONENT_3": component_3,
-                "COMPONENT_4": component_4
-            }
-        });
-    }
+    // #[rstest::rstest]
+    // fn json_resolve_valid(
+    //     component_1: &JsonComponent,
+    //     component_2: &JsonComponent,
+    //     component_3: &JsonComponent,
+    //     component_4: &JsonComponent,
+    //     method_1: &JsonComponent,
+    // ) {
+    //     crate::logger_init();
+    //
+    //     let file_a = file!("./file_a.json" => {
+    //         methods: [
+    //             method_1
+    //         ],
+    //         components: {
+    //             "COMPONENT_1": component_1,
+    //             "COMPONENT_2": component_2
+    //         }
+    //     });
+    //
+    //     let file_b = file!("./file_b.json" => {
+    //         components: {
+    //             "COMPONENT_3": component_3,
+    //             "COMPONENT_4": component_4
+    //         }
+    //     });
+    // }
 }
