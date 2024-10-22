@@ -22,6 +22,11 @@ jspm_packages/
 # Optional REPL history
 .node_repl_history
 
+# Debug files
+actual.json
+expected.json
+tmp.json
+diff.diff
 
 
 # Added by cargo

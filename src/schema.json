@@ -1,36 +1,29 @@
 {
-  "components": {
-    "schemas": {
-      "ACHIEVEMENT": {
-        "name": "Achievement",
-        "description": "A notable accomplishment",
-        "type": "object",
-        "properties": {
-          "title": {
-            "name": "title",
-            "type": "string"
-          },
-          "brief": {
-            "name": "brief",
-            "description": "A short description of an achievement",
+  "methods": [
+    {
+      "name": "character_info",
+      "description": "Returns a short description of the specified character",
+      "params": [
+        {
+          "name": "character name",
+          "description": "The name of the character",
+          "required": true,
+          "schema": {
             "type": "string"
           }
-        },
-        "required": [
-          "title",
-          "brief"
-        ]
-      },
-      "LOCALE": {
-        "name": "locale",
-        "description": "A location in the galaxy",
-        "enum": [
-          "Trantor",
-          "Terminus",
-          "Gaia",
-          "Earth"
-        ]
-      },
+        }
+      ],
+      "result": {
+        "name": "result",
+        "description": "The resulting character information",
+        "schema": {
+          "$ref": "#/components/schemas/CHARACTER"
+        }
+      }
+    }
+  ],
+  "components": {
+    "schemas": {
       "CHARACTER_ID": {
         "name": "character identity",
         "description": "Brief overview of a character's identity",
@@ -43,7 +36,7 @@
             "minimum": 0
           },
           "locale": {
-            "$ref": "#/components/schemas/LOCALE"
+            "$ref": "./src/schema_components.json#/components/schemas/LOCALE"
           },
           "title": {
             "name": "tile",
@@ -73,7 +66,7 @@
             "description": "A list of a character's most notable achievements",
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ACHIEVEMENT"
+              "$ref": "./src/schema_components.json#/components/schemas/ACHIEVEMENT"
             }
           },
           "friends": {

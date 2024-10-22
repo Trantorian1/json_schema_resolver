@@ -1,0 +1,37 @@
+{
+  "methods": [],
+  "components": {
+    "schemas": {
+      "ACHIEVEMENT": {
+        "name": "Achievement",
+        "description": "A notable accomplishment",
+        "type": "object",
+        "properties": {
+          "title": {
+            "name": "title",
+            "type": "string"
+          },
+          "brief": {
+            "name": "brief",
+            "description": "A short description of an achievement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "brief"
+        ]
+      },
+      "LOCALE": {
+        "name": "locale",
+        "description": "A location in the galaxy",
+        "enum": [
+          "Trantor",
+          "Terminus",
+          "Gaia",
+          "Earth"
+        ]
+      }
+    }
+  }
+}
