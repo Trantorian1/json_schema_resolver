@@ -14,6 +14,19 @@ struct Cli {
     files: Vec<std::path::PathBuf>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+struct SchemaComponents {
+    schemas: serde_json::Map<String, serde_json::Value>,
+    // TODO:
+    // errors: serde_json::Value::Object
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+struct SchemaFile {
+    methods: Vec<serde_json::Value>,
+    components: SchemaComponents,
+}
+
 // TODO: move error handling to eyre
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -83,10 +96,7 @@ where
 }
 
 #[tracing::instrument(skip(iter))]
-fn json_load<I>(
-    iter: I,
-    size_hint: Option<usize>,
-) -> anyhow::Result<Vec<(serde_json::Map<String, serde_json::Value>, String)>>
+fn json_load<I>(iter: I, size_hint: Option<usize>) -> anyhow::Result<Vec<(SchemaFile, String)>>
 where
     I: IntoIterator<Item = (io::BufReader<fs::File>, String)> + std::fmt::Debug,
 {
@@ -107,30 +117,15 @@ where
 fn ref_load<I>(iter: &I) -> anyhow::Result<HashMap<String, (String, serde_json::Value)>>
 where
     I: ?Sized,
-    for<'a> &'a I: IntoIterator<Item = &'a (serde_json::Map<String, serde_json::Value>, String)>
-        + std::fmt::Debug
-        + serde::Serialize,
+    for<'a> &'a I: IntoIterator<Item = &'a (SchemaFile, String)> + std::fmt::Debug + serde::Serialize,
 {
     tracing::info!("Loading file references");
     tracing::trace!("File references are: {}", serde_json::to_string_pretty(&iter).unwrap_or_default());
 
     iter.into_iter().try_fold(HashMap::<String, (String, serde_json::Value)>::default(), |mut acc, (json, path)| {
         tracing::debug!("Loading references from file: {path}");
-        tracing::debug!("Loading references from file: {path} - EXTRACTING SCHEMAS");
 
-        let schemas = json
-            .get("components")
-            .with_context(|| format!("invalid Json RPC format in {path}: should have a 'components' top-level field"))?
-            .as_object()
-            .with_context(|| format!("Error parsing {path}: top-level field 'components' should be a json object"))?
-            .get("schemas")
-            .with_context(|| format!("Error parsing {path}: 'components/schemas' is missing"))?
-            .as_object()
-            .with_context(|| format!("Error parsing {path}: 'components/schemas' is not a json object"))?;
-
-        tracing::debug!("Loading references from file: {path} - STORING SCHEMAS");
-
-        for (key, value) in schemas.iter() {
+        for (key, value) in json.components.schemas.iter() {
             if !acc.contains_key(key) {
                 let mut path_key = String::with_capacity(path.len() + key.len());
                 path_key.push_str(path);
@@ -377,7 +372,7 @@ fn ref_replace(
 
 #[tracing::instrument(skip(iter, deref_map))]
 fn json_resolve(
-    iter: &mut [(serde_json::Map<String, serde_json::Value>, String)],
+    iter: &mut [(SchemaFile, String)],
     deref_map: &serde_json::Map<String, serde_json::Value>,
 ) -> anyhow::Result<()> {
     tracing::info!("Resolving json files");
@@ -385,103 +380,85 @@ fn json_resolve(
     iter.iter_mut().try_fold((), |_, (json, local_file)| {
         tracing::debug!("Resolving json in: {local_file}");
 
-        let methods = json.get_mut("methods").with_context(|| {
-            format!("invalid Json RPC format in {local_file}: should have a 'methods' top-level field")
+        tracing::trace!("Defined methods are: {}", serde_json::to_string_pretty(&json.methods).unwrap_or_default());
+
+        json.methods.iter_mut().try_fold((), |_, val| {
+            *val = ref_replace(local_file, val, deref_map)?;
+            anyhow::Ok(())
         })?;
 
-        tracing::trace!("Defined methods are: {}", serde_json::to_string_pretty(&methods).unwrap_or_default());
+        tracing::trace!(
+            "Defined components are: {}",
+            serde_json::to_string_pretty(&json.components.schemas).unwrap_or_default()
+        );
 
-        methods
-            .as_array_mut()
-            .with_context(|| format!("Error parsing {local_file}: 'methods' is not a json object"))?
-            .iter_mut()
-            .try_fold((), |_, val| {
-                *val = ref_replace(local_file, val, deref_map)?;
-                anyhow::Ok(())
-            })?;
+        json.components.schemas.iter_mut().try_fold((), |_, (key, val)| {
+            tracing::debug!("Resolving component: {key}");
 
-        let schemas = json
-            .get_mut("components")
-            .with_context(|| format!("Error parsing {local_file}: should have a 'components' top-level field"))?
-            .get_mut("schemas")
-            .with_context(|| {
-                format!("Error parsing {local_file}: should have a 'components/schemas' top-level field")
-            })?;
+            let mut key_new = String::with_capacity(local_file.len() + key.len());
+            key_new.push_str(local_file);
+            key_new.push_str(key);
 
-        tracing::trace!("Defined components are: {}", serde_json::to_string_pretty(&schemas).unwrap_or_default());
+            tracing::debug!("Retrieving at key: {key_new}");
 
-        schemas
-            .as_object_mut()
-            .with_context(|| format!("Error parsing {local_file}: 'components/schemas' is not a Json object"))?
-            .iter_mut()
-            .try_fold((), |_, (key, val)| {
-                tracing::debug!("Resolving component: {key}");
+            *val = deref_map
+                .get(&key_new)
+                .with_context(|| format!("Error parsing {local_file}: could not dereference {key}"))
+                .cloned()?;
 
-                let mut key_new = String::with_capacity(local_file.len() + key.len());
-                key_new.push_str(local_file);
-                key_new.push_str(key);
-
-                tracing::debug!("Retrieving at key: {key_new}");
-
-                *val = deref_map
-                    .get(&key_new)
-                    .with_context(|| format!("Error parsing {local_file}: could not dereference {key}"))
-                    .cloned()?;
-
-                anyhow::Ok(())
-            })?;
+            anyhow::Ok(())
+        })?;
 
         anyhow::Ok(())
     })
 }
 
 #[tracing::instrument(skip(iter))]
-fn json_merge<I>(iter: I) -> anyhow::Result<serde_json::Map<String, serde_json::Value>>
+fn json_merge<I>(iter: I) -> anyhow::Result<SchemaFile>
 where
-    I: IntoIterator<Item = (serde_json::Map<String, serde_json::Value>, String)>,
+    I: IntoIterator<Item = (SchemaFile, String)>,
 {
     tracing::info!("Merging files");
 
     let mut method_set = HashSet::<String>::default();
-    let mut acc = serde_json::Map::default();
-    acc.insert("methods".to_string(), serde_json::Value::Array(Vec::default()));
+    let mut schema_set = HashSet::<String>::default();
 
-    iter.into_iter().try_fold(acc, |mut acc, (json, local_file)| {
-        tracing::debug!("Merging contents for {local_file}");
+    iter.into_iter().try_fold(SchemaFile::default(), |mut acc, (json, local_file)| {
+        tracing::debug!("Merging methods for {local_file}");
 
-        let methods = json
-            .get("methods")
-            .with_context(|| format!("Error parsing {local_file}: should have a 'methods' top-level field"))?;
+        tracing::trace!("File methods are: {}", serde_json::to_string_pretty(&json.methods).unwrap_or_default());
 
-        let serde_json::Value::Array(methods_local) = methods else {
-            anyhow::bail!("Error parsing {local_file}: top-level field 'methods' should be a json array");
-        };
-
-        tracing::trace!("File methods are: {}", serde_json::to_string_pretty(&methods_local).unwrap_or_default());
-
-        let methods_acc = acc
-            .get_mut("methods")
-            .expect("'methods' should have been added manually")
-            .as_array_mut()
-            .expect("'methods' should be an array");
-
-        for method in methods_local {
+        for method in json.methods {
             let name = method
-                .as_object()
-                .with_context(|| format!("Error parsing {local_file}: rpc methods should be a json object"))?
                 .get("name")
                 .with_context(|| format!("Error parsing {local_file}: methods should have a name"))?
                 .as_str()
                 .with_context(|| format!("Error parsing {local_file}: method name should be a string"))?;
 
-            tracing::debug!("Merging method: {method}");
+            tracing::debug!("Merging method: {}", serde_json::to_string_pretty(&method).unwrap_or_default());
 
             anyhow::ensure!(
                 method_set.insert(name.to_string()),
                 "Error merging {local_file}: method '{name}' has already been declared in a previous file"
             );
 
-            methods_acc.push(method.clone());
+            acc.methods.push(method.clone());
+        }
+
+        tracing::debug!("Merging schemas for {local_file}");
+
+        tracing::trace!(
+            "File schemas are: {}",
+            serde_json::to_string_pretty(&json.components.schemas).unwrap_or_default()
+        );
+
+        for (name, schema) in json.components.schemas {
+            anyhow::ensure!(
+                schema_set.insert(name.clone()),
+                "Error merging {local_file}: schema '{name}' has already been declared in a previous file"
+            );
+
+            acc.components.schemas.insert(name, schema);
         }
 
         anyhow::Ok(acc)
@@ -491,6 +468,8 @@ where
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
+
+    use crate::SchemaFile;
 
     #[rstest::fixture]
     fn file_paths() -> Vec<std::path::PathBuf> {
@@ -506,7 +485,7 @@ mod test {
     }
 
     #[rstest::fixture]
-    fn file_jsons(file_paths: Vec<std::path::PathBuf>) -> Vec<(serde_json::Map<String, serde_json::Value>, String)> {
+    fn file_jsons(file_paths: Vec<std::path::PathBuf>) -> Vec<(SchemaFile, String)> {
         file_paths
             .into_iter()
             .map(|path| (std::fs::File::open(&path).unwrap(), path.to_string_lossy().to_string()))
@@ -516,9 +495,7 @@ mod test {
     }
 
     #[rstest::fixture]
-    fn file_jsons_deref(
-        file_paths_deref: Vec<std::path::PathBuf>,
-    ) -> Vec<(serde_json::Map<String, serde_json::Value>, String)> {
+    fn file_jsons_deref(file_paths_deref: Vec<std::path::PathBuf>) -> Vec<(SchemaFile, String)> {
         file_paths_deref
             .into_iter()
             .map(|path| (std::fs::File::open(&path).unwrap(), path.to_string_lossy().to_string()))
@@ -531,11 +508,16 @@ mod test {
             .collect()
     }
 
+    #[rstest::fixture]
+    fn file_json_merged() -> SchemaFile {
+        let path = std::path::PathBuf::from("./src/schema_merged.json");
+        let file = std::fs::File::open(path).expect("Opening ./src/schema_merged.json");
+        let reader = std::io::BufReader::new(file);
+        serde_json::from_reader(reader).expect("Loading json from ./src/schema_merged.json")
+    }
+
     #[rstest::rstest]
-    fn files_and_json_load_valid(
-        file_paths: Vec<std::path::PathBuf>,
-        file_jsons: Vec<(serde_json::Map<String, serde_json::Value>, String)>,
-    ) {
+    fn files_and_json_load_valid(file_paths: Vec<std::path::PathBuf>, file_jsons: Vec<(SchemaFile, String)>) {
         crate::logger_init();
 
         let readers_and_paths = crate::files_load(file_paths, None).expect("Initializing file readers");
@@ -545,26 +527,19 @@ mod test {
     }
 
     #[rstest::rstest]
-    fn ref_load_valid(
-        file_paths: Vec<std::path::PathBuf>,
-        file_jsons: Vec<(serde_json::Map<String, serde_json::Value>, String)>,
-    ) {
+    fn ref_load_valid(file_paths: Vec<std::path::PathBuf>, file_jsons: Vec<(SchemaFile, String)>) {
         crate::logger_init();
 
         let readers_and_paths = crate::files_load(file_paths, None).expect("Initializing file readers");
         let json_in_and_files = crate::json_load(readers_and_paths, None).expect("Loading json");
         let ref_map = crate::ref_load(&json_in_and_files).expect("Resolving references");
 
-        let expected = file_jsons
-            .into_iter()
-            .map(|(json, path)| (json.get("components").unwrap().clone(), path))
-            .map(|(component, path)| (component.get("schemas").unwrap().as_object().unwrap().clone(), path))
-            .fold(HashMap::with_capacity(ref_map.len()), |mut acc, (schema, path)| {
-                schema.into_iter().for_each(|(key, val)| {
-                    acc.insert(format!("{path}{key}"), (path.clone(), val.clone()));
-                });
-                acc
+        let expected = file_jsons.into_iter().fold(HashMap::with_capacity(ref_map.len()), |mut acc, (json, path)| {
+            json.components.schemas.into_iter().for_each(|(key, val)| {
+                acc.insert(format!("{path}{key}"), (path.clone(), val.clone()));
             });
+            acc
+        });
 
         let file = std::fs::File::create("./actual.json").unwrap();
         let writer = std::io::BufWriter::new(file);
@@ -577,17 +552,14 @@ mod test {
         assert_eq!(
             ref_map,
             expected,
-            "{} != {}",
+            "actual: {}\nexpected: {}",
             serde_json::to_string_pretty(&ref_map).unwrap(),
             serde_json::to_string_pretty(&expected).unwrap()
         );
     }
 
     #[rstest::rstest]
-    fn ref_resolve_valid(
-        file_paths: Vec<std::path::PathBuf>,
-        file_jsons_deref: Vec<(serde_json::Map<String, serde_json::Value>, String)>,
-    ) {
+    fn ref_resolve_valid(file_paths: Vec<std::path::PathBuf>, file_jsons_deref: Vec<(SchemaFile, String)>) {
         crate::logger_init();
 
         let readers_and_paths = crate::files_load(file_paths, None).expect("Initializing file readers");
@@ -595,16 +567,12 @@ mod test {
         let ref_map = crate::ref_load(&json_in_and_files).unwrap();
         let deref_map = crate::ref_resolved(ref_map).expect("Resolving references");
 
-        let expected = file_jsons_deref
-            .into_iter()
-            .map(|(json, path)| (json.get("components").unwrap().clone(), path))
-            .map(|(component, path)| (component.get("schemas").unwrap().as_object().unwrap().clone(), path))
-            .fold(serde_json::Map::default(), |mut acc, (schema, path)| {
-                schema.into_iter().for_each(|(key, val)| {
-                    acc.insert(format!("{path}{key}"), val.clone());
-                });
-                acc
+        let expected = file_jsons_deref.into_iter().fold(serde_json::Map::default(), |mut acc, (json, path)| {
+            json.components.schemas.into_iter().for_each(|(key, val)| {
+                acc.insert(format!("{path}{key}"), val.clone());
             });
+            acc
+        });
 
         let file = std::fs::File::create("./actual.json").unwrap();
         let writer = std::io::BufWriter::new(file);
@@ -617,7 +585,7 @@ mod test {
         assert_eq!(
             deref_map,
             expected,
-            "{} != {}",
+            "actual: {}\nexpected: {}",
             serde_json::to_string_pretty(&deref_map).unwrap(),
             serde_json::to_string_pretty(&expected).unwrap()
         )
@@ -625,10 +593,7 @@ mod test {
 
     #[rstest::rstest]
     // TODO: add error reference resolution
-    fn json_resolve_valid(
-        file_paths: Vec<std::path::PathBuf>,
-        file_jsons_deref: Vec<(serde_json::Map<String, serde_json::Value>, String)>,
-    ) {
+    fn json_resolve_valid(file_paths: Vec<std::path::PathBuf>, file_jsons_deref: Vec<(SchemaFile, String)>) {
         crate::logger_init();
 
         let readers_and_paths = crate::files_load(file_paths, None).expect("Initializing file readers");
@@ -648,9 +613,37 @@ mod test {
         assert_eq!(
             json_in_and_files,
             file_jsons_deref,
-            "{} != {}",
+            "actual: {}\nexpected: {}",
             serde_json::to_string_pretty(&json_in_and_files).unwrap(),
             serde_json::to_string_pretty(&file_jsons_deref).unwrap()
+        )
+    }
+
+    #[rstest::rstest]
+    fn json_merge_valid(file_paths: Vec<std::path::PathBuf>, file_json_merged: SchemaFile) {
+        crate::logger_init();
+
+        let readers_and_paths = crate::files_load(file_paths, None).expect("Initializing file readers");
+        let mut json_in_and_files = crate::json_load(readers_and_paths, None).expect("Loading json");
+        let ref_map = crate::ref_load(&json_in_and_files).unwrap();
+        let deref_map = crate::ref_resolved(ref_map).expect("Resolving references");
+        crate::json_resolve(&mut json_in_and_files, &deref_map).expect("Resolving json methods");
+        let json_out = crate::json_merge(json_in_and_files).expect("Merging json files");
+
+        let file = std::fs::File::create("./actual.json").unwrap();
+        let writer = std::io::BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, &json_out).unwrap();
+
+        let file = std::fs::File::create("./expected.json").unwrap();
+        let writer = std::io::BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, &file_json_merged).unwrap();
+
+        assert_eq!(
+            json_out,
+            file_json_merged,
+            "actual: {}\nexpected: {}",
+            serde_json::to_string_pretty(&json_out).unwrap(),
+            serde_json::to_string_pretty(&file_json_merged).unwrap(),
         )
     }
 }
