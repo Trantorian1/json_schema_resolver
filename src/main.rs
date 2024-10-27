@@ -9,9 +9,31 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Layer;
 
 #[derive(Parser)]
+/// A simple Json schema merge algorithm
+///
+/// This program will load multiple self-referential Json schema files and
+/// merge them into a single expanded version of all their schemas combined,
+/// resolving any references in the process.
 struct Cli {
     #[arg(short, long, required = true, num_args = 1..)]
+    /// Json schema files to be merged
+    ///
+    /// These typically are a series of schema files in a single project, but
+    /// can also be unrelated. Simple restrictions apply, such as not being
+    /// able to define conflicting components. This include components with
+    /// the same names, or components overriding the same field where
+    /// referenced.
+    ///
+    /// Note that nested references are currently not yet supported.
     files: Vec<std::path::PathBuf>,
+
+    #[arg(short, long, required = true)]
+    /// Output file location
+    ///
+    /// This is where the merged schema will be stored. Merged schemas are
+    /// expanded, that is to say all references are removed and replaced with
+    /// their actual json value.
+    out: std::path::PathBuf,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -53,9 +75,10 @@ fn main() -> anyhow::Result<()> {
     json_resolve(&mut json_in_and_files, &deref_map)?;
 
     // Once the de-referencing has taken place, we now need to merge each JSON Schema into one
-    let _json_out = json_merge(json_in_and_files)?;
+    let json_out = json_merge(json_in_and_files)?;
 
-    anyhow::Ok(())
+    // Finally, we write out the merged json to the specified out file
+    json_write(json_out, cli.out)
 }
 
 fn logger_init() {
@@ -153,7 +176,7 @@ fn ref_resolve(
     val: &serde_json::Value,
     ref_map: &HashMap<String, (String, serde_json::Value)>,
 ) -> anyhow::Result<serde_json::Value> {
-    tracing::info!("Resolving reference");
+    tracing::debug!("Resolving reference");
     tracing::trace!("Reference is: {}", serde_json::to_string_pretty(val).unwrap_or_default());
     tracing::debug!("Asserting reference type");
 
@@ -290,7 +313,7 @@ fn ref_replace(
     val: &serde_json::Value,
     deref_map: &serde_json::Map<String, serde_json::Value>,
 ) -> anyhow::Result<serde_json::Value> {
-    tracing::info!("Resolving method reference in: {local_file}");
+    tracing::debug!("Resolving method reference in: {local_file}");
     tracing::trace!("Reference is: {}", serde_json::to_string_pretty(val).unwrap_or_default());
     tracing::debug!("Asserting reference type");
 
@@ -463,6 +486,20 @@ where
 
         anyhow::Ok(acc)
     })
+}
+
+#[tracing::instrument(skip(schema))]
+fn json_write(schema: SchemaFile, out: std::path::PathBuf) -> anyhow::Result<()> {
+    tracing::info!("Writing merged json");
+
+    let file =
+        std::fs::File::create(&out).with_context(|| format!("Failed to write to file {}", out.to_string_lossy()))?;
+
+    tracing::debug!("Created file at {}", out.to_string_lossy());
+
+    let writer = std::io::BufWriter::new(file);
+    serde_json::to_writer_pretty(writer, &schema)
+        .with_context(|| format!("Failed to serialize json to file {}", out.to_string_lossy()))
 }
 
 #[cfg(test)]
